@@ -29,13 +29,6 @@ const SCAN_OVERLAP = 8192;
 // Types
 // =============================================================================
 
-export interface SecretPattern {
-  /** Human-readable name for display/logging. */
-  name: string;
-  /** Global regex matching the secret format. */
-  regex: RegExp;
-}
-
 export interface SecretMapping {
   real: string;
   fake: string;
@@ -43,7 +36,6 @@ export interface SecretMapping {
 
 interface SecretChange {
   type: "mask" | "unmask";
-  secretType: string;
   hint: string;
 }
 
@@ -66,21 +58,21 @@ const TEST = "test";
 // Default detection patterns
 // =============================================================================
 
-export const DEFAULT_PATTERNS: SecretPattern[] = [
-  { name: "openai-api-key",       regex: /sk-[a-zA-Z0-9-]{20,}/g },
-  { name: "anthropic-api-key",    regex: /sk-ant-[a-zA-Z0-9-]{20,}/g },
-  { name: "github-pat-v1",        regex: /(?:ghp|gho|ghs|ghu)_[a-zA-Z0-9]{36,}/g },
-  { name: "github-pat-v2",        regex: /github_pat_[a-zA-Z0-9_]{82}/g },
-  { name: "aws-access-key",       regex: /(?:AKIA|ASIA)[A-Z0-9]{16}/g },
-  { name: "stripe-live",          regex: new RegExp(`sk_${LIVE}_[a-zA-Z0-9-]{24,}`, "g") },
-  { name: "stripe-test",          regex: new RegExp(`sk_${TEST}_[a-zA-Z0-9-]{24,}`, "g") },
-  { name: "slack-token",          regex: /xox[baprs]-[a-zA-Z0-9-]{10,}/g },
-  { name: "jwt",                  regex: /eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g },
-  { name: "private-key-block",    regex: /-----BEGIN\s+(?:RSA\s+|EC\s+|DSA\s+|OPENSSH\s+)?PRIVATE KEY[\s\S]*?-----END\s+(?:RSA\s+|EC\s+|DSA\s+|OPENSSH\s+)?PRIVATE KEY-----/g },
-  { name: "pem-key",              regex: /-----BEGIN [A-Z ]*KEY-----[\s\S]*?-----END [A-Z ]*KEY-----/g },
-  { name: "google-api-key",       regex: /AIza[a-zA-Z0-9_-]{35,}/g },
-  { name: "gitlab-pat",           regex: /glpat-[a-zA-Z0-9_-]{20,}/g },
-  { name: "sendgrid-key",         regex: /SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}/g },
+export const DEFAULT_PATTERNS: RegExp[] = [
+  /sk-[a-zA-Z0-9-]{20,}/g, // OpenAI API key
+  /sk-ant-[a-zA-Z0-9-]{20,}/g, // Anthropic API key
+  /(?:ghp|gho|ghs|ghu)_[a-zA-Z0-9]{36,}/g, // GitHub PAT v1
+  /github_pat_[a-zA-Z0-9_]{82}/g, // GitHub PAT v2
+  /(?:AKIA|ASIA)[A-Z0-9]{16}/g, // AWS access key
+  new RegExp(`sk_${LIVE}_[a-zA-Z0-9-]{24,}`, "g"), // Stripe live key
+  new RegExp(`sk_${TEST}_[a-zA-Z0-9-]{24,}`, "g"), // Stripe test key
+  /xox[baprs]-[a-zA-Z0-9-]{10,}/g, // Slack token
+  /eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g, // JWT
+  /-----BEGIN\s+(?:RSA\s+|EC\s+|DSA\s+|OPENSSH\s+)?PRIVATE KEY[\s\S]*?-----END\s+(?:RSA\s+|EC\s+|DSA\s+|OPENSSH\s+)?PRIVATE KEY-----/g, // Private key block
+  /-----BEGIN [A-Z ]*KEY-----[\s\S]*?-----END [A-Z ]*KEY-----/g, // PEM key
+  /AIza[a-zA-Z0-9_-]{35,}/g, // Google API key
+  /glpat-[a-zA-Z0-9_-]{20,}/g, // GitLab PAT
+  /SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}/g, // SendGrid key
 ];
 
 // =============================================================================
@@ -93,17 +85,17 @@ export class SecretStore {
   /** fake → real secret value */
   private fakeToReal = new Map<string, string>();
   /** active detection patterns */
-  private patterns: SecretPattern[] = [];
+  private patterns: RegExp[] = [];
 
   // ---------------------------------------------------------------------------
   // Configuration
   // ---------------------------------------------------------------------------
 
-  setPatterns(p: SecretPattern[]): void {
+  setPatterns(p: RegExp[]): void {
     this.patterns = p;
   }
 
-  getPatterns(): SecretPattern[] {
+  getPatterns(): RegExp[] {
     return this.patterns;
   }
 
@@ -164,7 +156,7 @@ export class SecretStore {
     const seen = new Set<string>();
     const changes: SecretChange[] = [];
 
-    for (const { name, regex } of this.patterns) {
+    for (const regex of this.patterns) {
       regex.lastIndex = 0;
       let m: RegExpExecArray | null;
       while ((m = regex.exec(text)) !== null) {
@@ -176,7 +168,7 @@ export class SecretStore {
           seen.add(real);
           const { fake } = this.registerSecret(real);
           matches.set(real, fake);
-          changes.push({ type: "mask", secretType: name, hint: this.hint(real) });
+          changes.push({ type: "mask", hint: this.hint(real) });
         }
       }
     }
@@ -203,7 +195,7 @@ export class SecretStore {
       const end = Math.min(text.length, start + MAX_SCAN_SIZE);
       const chunk = text.slice(start, end);
 
-      for (const { name, regex } of this.patterns) {
+      for (const regex of this.patterns) {
         regex.lastIndex = 0;
         let m: RegExpExecArray | null;
         while ((m = regex.exec(chunk)) !== null) {
@@ -213,7 +205,7 @@ export class SecretStore {
             seen.add(real);
             const { fake } = this.registerSecret(real);
             matches.set(real, fake);
-            changes.push({ type: "mask", secretType: name, hint: this.hint(real) });
+            changes.push({ type: "mask", hint: this.hint(real) });
           }
         }
       }
@@ -253,7 +245,7 @@ export class SecretStore {
     for (const [fake, real] of sorted) {
       if (result.includes(fake)) {
         result = result.replaceAll(fake, real);
-        changes.push({ type: "unmask", secretType: this.getSecretType(real), hint: this.hint(real) });
+        changes.push({ type: "unmask", hint: this.hint(real) });
       }
     }
     return { text: result, changes };
@@ -283,14 +275,6 @@ export class SecretStore {
         real: this.hint(real),
         fake,
       }));
-  }
-
-  private getSecretType(real: string): string {
-    for (const { name, regex } of this.patterns) {
-      regex.lastIndex = 0;
-      if (regex.test(real)) return name;
-    }
-    return "secret";
   }
 
   // ---------------------------------------------------------------------------
