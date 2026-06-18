@@ -1,14 +1,14 @@
 /**
  * pi-fake-secret
  *
- * Fakes real secrets with lookalike placeholders before they reach the LLM,
+ * Fakes real secrets with lookalike fake secrets before they reach the LLM,
  * and restores them at execution time.
  *
- * ┌─ user input ──► input hook (real → placeholder) ──► LLM ──► tool_call(bash) hook (placeholder → real) ──► bash
+ * ┌─ user input ──► input hook (real → fake) ──► LLM ──► tool_call(bash) hook (fake → real) ──► bash
  *                                                                                                              │
- *  user ◄──── context hook (real → placeholder) ◄── LLM ◄── tool_result hook (real → placeholder) ◄────────────┘
+ *  user ◄──── context hook (real → fake) ◄── LLM ◄── tool_result hook (real → fake) ◄────────────┘
  *
- * The model (缸中之脑) only ever sees placeholders. The harness maintains
+ * The model (缸中之脑) only ever sees fake secrets. The harness maintains
  * a mapping table and does the swap at the bridge boundary.
  */
 
@@ -37,7 +37,7 @@ interface SecretPattern {
 
 interface SecretMapping {
   real: string;
-  placeholder: string;
+  fake: string;
 }
 
 // =============================================================================
@@ -69,14 +69,14 @@ const DEFAULT_PATTERNS: SecretPattern[] = [
 // =============================================================================
 
 class SecretStore {
-  /** real secret value → placeholder */
-  private realToPlaceholder = new Map<string, string>();
-  /** placeholder → real secret value */
-  private placeholderToReal = new Map<string, string>();
+  /** real secret value → fake */
+  private realToFake = new Map<string, string>();
+  /** fake → real secret value */
+  private fakeToReal = new Map<string, string>();
   /** active detection patterns */
   private patterns: SecretPattern[] = [];
   /** accumulated changes since last beginTracking() call */
-  private pendingChanges: Array<{real:string;placeholder:string;type:'mask'|'unmask'}> = [];
+  private pendingChanges: Array<{real:string;fake:string;type:'mask'|'unmask'}> = [];
   private tracking = false;
 
   // ---------------------------------------------------------------------------
@@ -102,7 +102,7 @@ class SecretStore {
   }
 
   /** Collect and clear accumulated changes. */
-  flushChanges(): Array<{real:string;placeholder:string;type:'mask'|'unmask'}> {
+  flushChanges(): Array<{real:string;fake:string;type:'mask'|'unmask'}> {
     this.tracking = false;
     const c = this.pendingChanges;
     this.pendingChanges = [];
@@ -114,43 +114,43 @@ class SecretStore {
   // ---------------------------------------------------------------------------
 
   /**
-   * Register a real secret value and return its placeholder.
-   * Deduplicated: same real value always returns the same placeholder.
+   * Register a real secret value and return its fake.
+   * Deduplicated: same real value always returns the same fake.
    */
   register(real: string): string {
-    const existing = this.realToPlaceholder.get(real);
+    const existing = this.realToFake.get(real);
     if (existing) return existing;
 
-    const placeholder = this.generatePlaceholder(real);
-    this.realToPlaceholder.set(real, placeholder);
-    this.placeholderToReal.set(placeholder, real);
+    const fake = this.generateFake(real);
+    this.realToFake.set(real, fake);
+    this.fakeToReal.set(fake, real);
     if (this.tracking) {
-      this.pendingChanges.push({ real, placeholder, type: 'mask' });
+      this.pendingChanges.push({ real, fake, type: 'mask' });
     }
-    return placeholder;
+    return fake;
   }
 
   /**
-   * Look up the real value for a placeholder.
-   * Returns undefined if the placeholder is unknown.
+   * Look up the real value for a fake secret.
+   * Returns undefined if the fake is unknown.
    */
-  resolve(placeholder: string): string | undefined {
-    return this.placeholderToReal.get(placeholder);
+  resolve(fake: string): string | undefined {
+    return this.fakeToReal.get(fake);
   }
 
   // ---------------------------------------------------------------------------
-  // Transform: mask  (replace real secrets with placeholders)
+  // Transform: mask  (replace real secrets with fake secrets)
   // ---------------------------------------------------------------------------
 
   /**
    * Scan text for known secret patterns, register them, and replace with
-   * placeholders. Longer matches are replaced first to avoid substring issues.
+   * fake secrets. Longer matches are replaced first to avoid substring issues.
    */
   mask(text: string): string {
     if (!text || text.length > MAX_SCAN_SIZE) return text;
 
     // First pass: collect all unique matches from the ORIGINAL text
-    const matches = new Map<string, string>(); // real → placeholder
+    const matches = new Map<string, string>(); // real → fake
     const seen = new Set<string>();
 
     for (const { regex } of this.patterns) {
@@ -158,9 +158,9 @@ class SecretStore {
       let m: RegExpExecArray | null;
       while ((m = regex.exec(text)) !== null) {
         const real = m[0];
-        // Skip if already a known placeholder (re-masking would create
+        // Skip if already a known fake (re-masking would create
         // a chain of stale mappings and confuse the round-trip)
-        if (this.placeholderToReal.has(real)) continue;
+        if (this.fakeToReal.has(real)) continue;
         if (!seen.has(real) && real.length >= 8) {
           seen.add(real);
           matches.set(real, this.register(real));
@@ -173,33 +173,33 @@ class SecretStore {
     // Second pass: apply replacements (longest first to avoid partial overlaps)
     const sorted = [...matches.entries()].sort((a, b) => b[0].length - a[0].length);
     let result = text;
-    for (const [real, placeholder] of sorted) {
-      result = result.replaceAll(real, placeholder);
+    for (const [real, fake] of sorted) {
+      result = result.replaceAll(real, fake);
     }
 
     return result;
   }
 
   // ---------------------------------------------------------------------------
-  // Transform: unmask  (replace known placeholders back to real values)
+  // Transform: unmask  (replace known fake secrets back to real values)
   // ---------------------------------------------------------------------------
 
   /**
-   * Replace all known placeholders in text with the original real values.
+   * Replace all known fake secrets in text with the original real values.
    */
   unmask(text: string): string {
-    if (!text || this.placeholderToReal.size === 0) return text;
+    if (!text || this.fakeToReal.size === 0) return text;
 
     let result = text;
-    // Longest placeholder first to avoid partial matches
-    const sorted = [...this.placeholderToReal.entries()]
+    // Longest fake first to avoid partial matches
+    const sorted = [...this.fakeToReal.entries()]
       .sort((a, b) => b[0].length - a[0].length);
-    for (const [placeholder, real] of sorted) {
-      if (result.includes(placeholder)) {
+    for (const [fake, real] of sorted) {
+      if (result.includes(fake)) {
         if (this.tracking) {
-          this.pendingChanges.push({ real, placeholder, type: 'unmask' });
+          this.pendingChanges.push({ real, fake, type: 'unmask' });
         }
-        result = result.replaceAll(placeholder, real);
+        result = result.replaceAll(fake, real);
       }
     }
     return result;
@@ -212,7 +212,7 @@ class SecretStore {
   getStats() {
     return {
       patternCount: this.patterns.length,
-      mappingCount: this.realToPlaceholder.size,
+      mappingCount: this.realToFake.size,
     };
   }
 
@@ -224,10 +224,10 @@ class SecretStore {
   }
 
   getMappings(): SecretMapping[] {
-    return [...this.realToPlaceholder.entries()]
-      .map(([real, placeholder]) => ({
+    return [...this.realToFake.entries()]
+      .map(([real, fake]) => ({
         real: this.hint(real),
-        placeholder,
+        fake,
       }));
   }
 
@@ -236,22 +236,22 @@ class SecretStore {
    * Fake:    🎭 sk-p…2504 → sk-proj-XyZAbCd...
    * Restore: 🎭 sk-proj-XyZAbCd... → sk-p…2504
    */
-  formatChange(c: {real:string;placeholder:string;type:'mask'|'unmask'}): string {
+  formatChange(c: {real:string;fake:string;type:'mask'|'unmask'}): string {
     if (c.type === 'mask') {
-      return `🎭 造假: ${this.hint(c.real)} → ${c.placeholder}`;
+      return `🎭 造假: ${this.hint(c.real)} → ${c.fake}`;
     }
-    return `🎭 还原: ${c.placeholder} → ${this.hint(c.real)}`;
+    return `🎭 还原: ${c.fake} → ${this.hint(c.real)}`;
   }
 
   // ---------------------------------------------------------------------------
-  // Placeholder generation
+  // Fake secret generation
   // ---------------------------------------------------------------------------
 
   /**
-   * Generate a placeholder that looks indistinguishable from the original.
+   * Generate a fake secret that looks indistinguishable from the original.
    *
    * Strategy: keep the first "prefix segment" (e.g. sk-, ghp_, AKIA) unchanged
-   * so the placeholder looks like the same TYPE of credential. Randomize the
+   * so the fake looks like the same TYPE of credential. Randomize the
    * variable "body" part character by character within the same case class
    * (lowercase, uppercase, digit).
    *
@@ -262,7 +262,7 @@ class SecretStore {
    *   ghp_AbCdEfGhIjKlMnOp1234567890AbCdEfGhIjKlMnOp1234
    *     → ghp_XyZABcDeFgHiJkLmN9876543210XyZABcDeFgHiJkLmN9876
    */
-  private generatePlaceholder(real: string): string {
+  private generateFake(real: string): string {
     // Find the boundary between the structural prefix and the random body:
     // take everything up to the last non-alphanumeric character that is
     // followed by at least 6 alphanumeric characters
@@ -398,7 +398,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   // ---------------------------------------------------------------------------
-  // tool_call — swap placeholders back to real values before tool executes
+  // tool_call — swap fake secrets back to real values before tool executes
   // ---------------------------------------------------------------------------
   pi.on("tool_call", async (event, ctx) => {
     if (store.getStats().mappingCount === 0) return {};
@@ -538,7 +538,7 @@ export default function (pi: ExtensionAPI): void {
         }
         // Display in a simple format
         const lines = mappings.map(
-          (m) => `  ${m.real}  →  ${m.placeholder}`
+          (m) => `  ${m.real}  →  ${m.fake}`
         );
         ctx.ui.notify(`Secret mappings (${mappings.length}):\n${lines.join("\n")}`, "info");
         return;

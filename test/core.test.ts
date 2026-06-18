@@ -30,24 +30,24 @@ const DEFAULT_PATTERNS: Pattern[] = [
 ];
 
 class SecretStore {
-  private realToPlaceholder = new Map<string, string>();
-  private placeholderToReal = new Map<string, string>();
+  private realToFake = new Map<string, string>();
+  private fakeToReal = new Map<string, string>();
   private patterns: Pattern[] = [...DEFAULT_PATTERNS];
 
   setPatterns(p: Pattern[]): void { this.patterns = p; }
   getPatterns(): Pattern[] { return this.patterns; }
 
   register(real: string): string {
-    const existing = this.realToPlaceholder.get(real);
+    const existing = this.realToFake.get(real);
     if (existing) return existing;
-    const placeholder = this.generatePlaceholder(real);
-    this.realToPlaceholder.set(real, placeholder);
-    this.placeholderToReal.set(placeholder, real);
-    return placeholder;
+    const fake = this.generatePlaceholder(real);
+    this.realToFake.set(real, fake);
+    this.fakeToReal.set(fake, real);
+    return fake;
   }
 
-  resolve(placeholder: string): string | undefined {
-    return this.placeholderToReal.get(placeholder);
+  resolve(fake: string): string | undefined {
+    return this.fakeToReal.get(fake);
   }
 
   mask(text: string): string {
@@ -59,7 +59,7 @@ class SecretStore {
       let m: RegExpExecArray | null;
       while ((m = regex.exec(text)) !== null) {
         const real = m[0];
-        if (this.placeholderToReal.has(real)) continue;
+        if (this.fakeToReal.has(real)) continue;
         if (!seen.has(real) && real.length >= 8) {
           seen.add(real);
           matches.set(real, this.register(real));
@@ -69,19 +69,19 @@ class SecretStore {
     if (matches.size === 0) return text;
     const sorted = [...matches.entries()].sort((a, b) => b[0].length - a[0].length);
     let result = text;
-    for (const [real, placeholder] of sorted) {
-      result = result.replaceAll(real, placeholder);
+    for (const [real, fake] of sorted) {
+      result = result.replaceAll(real, fake);
     }
     return result;
   }
 
   unmask(text: string): string {
-    if (!text || this.placeholderToReal.size === 0) return text;
+    if (!text || this.fakeToReal.size === 0) return text;
     let result = text;
-    const sorted = [...this.placeholderToReal.entries()]
+    const sorted = [...this.fakeToReal.entries()]
       .sort((a, b) => b[0].length - a[0].length);
-    for (const [placeholder, real] of sorted) {
-      result = result.replaceAll(placeholder, real);
+    for (const [fake, real] of sorted) {
+      result = result.replaceAll(fake, real);
     }
     return result;
   }
@@ -126,7 +126,7 @@ class SecretStore {
   }
 
   getStats(): { patternCount: number; mappingCount: number } {
-    return { patternCount: this.patterns.length, mappingCount: this.realToPlaceholder.size };
+    return { patternCount: this.patterns.length, mappingCount: this.realToFake.size };
   }
 }
 
@@ -166,9 +166,9 @@ console.log('\n📦 Registration & 1:1 mapping');
   const s = new SecretStore();
   const p1 = s.register('sk-proj-AbCdEfGhIjKlMnOp1234567890');
   const p2 = s.register('sk-proj-AbCdEfGhIjKlMnOp1234567890');
-  assertEqual(p1, p2, 'same real → same placeholder');
+  assertEqual(p1, p2, 'same real → same fake');
   assertEqual(s.resolve(p1), 'sk-proj-AbCdEfGhIjKlMnOp1234567890', 'resolve returns original');
-  assertEqual(s.resolve('nonexistent'), undefined, 'unknown placeholder → undefined');
+  assertEqual(s.resolve('nonexistent'), undefined, 'unknown fake → undefined');
 }
 
 // 2. Placeholder format: prefix preserved, same length
@@ -238,9 +238,9 @@ console.log('\n📦 unmask() bash commands');
   const input = 'use key sk-proj-AbCdEfGhIjKlMnOp1234567890';
   const masked = s.mask(input);
 
-  // Simulate model writing a bash command using the placeholder
-  const placeholder = masked.match(/sk-proj-[a-zA-Z0-9]+/)[0];
-  const bashCmd = `echo ${placeholder} > /tmp/key.txt`;
+  // Simulate model writing a bash command using the fake
+  const fake = masked.match(/sk-proj-[a-zA-Z0-9]+/)[0];
+  const bashCmd = `echo ${fake} > /tmp/key.txt`;
 
   const unmasked = s.unmask(bashCmd);
   assertEqual(unmasked, 'echo sk-proj-AbCdEfGhIjKlMnOp1234567890 > /tmp/key.txt',
@@ -317,8 +317,8 @@ console.log('\n📦 .env file simulation');
   assertEqual(unmasked, envFile, 'full env file round-trips correctly');
 }
 
-// 11. Don't re-register known placeholders
-console.log('\n📦 No re-registration of known placeholders');
+// 11. Don't re-register known fakes
+console.log('\n📦 No re-registration of known fakes');
 {
   const s = new SecretStore();
   const orig = 'sk-proj-ORIGINAL-VALUE-1234567890';
@@ -327,22 +327,22 @@ console.log('\n📦 No re-registration of known placeholders');
   assert(!masked.includes(orig), 'original removed after first mask');
   assertEqual(s.getStats().mappingCount, 1, 'one secret registered');
 
-  // Extract the placeholder from masked output
-  const placeholder = masked.match(/sk-proj-[a-zA-Z0-9-]+/)[0];
+  // Extract the fake from masked output
+  const fake = masked.match(/sk-proj-[a-zA-Z0-9-]+/)[0];
 
-  // Second: mask again with the placeholder in the text (simulating
-  // a tool_result containing the placeholder)
-  const reMasked = s.mask(`found key: ${placeholder}`);
-  // The placeholder should NOT be re-registered — it's already a known placeholder
-  assertEqual(s.getStats().mappingCount, 1, 'no new registration for existing placeholder');
-  assert(reMasked.includes(placeholder), 'placeholder preserved (not re-masked)');
+  // Second: mask again with the fake in the text (simulating
+  // a tool_result containing the fake)
+  const reMasked = s.mask(`found key: ${fake}`);
+  // The fake should NOT be re-registered — it's already a known fake
+  assertEqual(s.getStats().mappingCount, 1, 'no new registration for existing fake');
+  assert(reMasked.includes(fake), 'fake preserved (not re-masked)');
 
   // Third: unmask should still work
   const unmasked = s.unmask(reMasked);
   assertEqual(unmasked, `found key: ${orig}`, 'round-trip still works after re-mask guard');
 }
 
-// 12. AWS key placeholder format
+// 12. AWS key fake format
 console.log('\n📦 AWS key format');
 {
   const s = new SecretStore();
@@ -359,14 +359,14 @@ console.log('\n📦 No stale mappings on re-mask');
   // Simulate: user runs `!cat file` which outputs a secret
   const bashOutput = 'KEY=sk-proj-AbCdEfGhIjKlMnOp1234567890';
   const maskedOnce = s.mask(bashOutput);
-  const placeholder = maskedOnce.match(/sk-proj-[a-zA-Z0-9-]+/)[0];
+  const fake = maskedOnce.match(/sk-proj-[a-zA-Z0-9-]+/)[0];
   assertEqual(s.getStats().mappingCount, 1, 'one mapping after first mask');
 
   // Simulate: the same bash output appears again (e.g., in context history)
   const maskedTwice = s.mask(bashOutput);
-  // The same placeholder should be used — same real → same placeholder
-  assert(maskedTwice.includes(placeholder),
-    'same placeholder used on re-mask of same secret');
+  // The same fake should be used — same real → same fake
+  assert(maskedTwice.includes(fake),
+    'same fake used on re-mask of same secret');
   assertEqual(s.getStats().mappingCount, 1,
     'no extra mappings on re-mask');
 }
@@ -382,32 +382,32 @@ console.log('\n📦 Bash ! command scenario: output → context → LLM');
   assert(!masked.includes('sk-proj-DB-SECRET-888877776655'), 'secret masked from ! output');
   assert(masked.includes('postgres://user:'), 'URL structure preserved');
 
-  // Extract placeholder
-  const placeholder = masked.match(/sk-proj-[a-zA-Z0-9-]+/)[0];
+  // Extract fake
+  const fake = masked.match(/sk-proj-[a-zA-Z0-9-]+/)[0];
 
   // Phase 2: masked content is in context history
   // context handler calls mask() again
   const reMasked = s.mask(masked);
-  assert(reMasked.includes(placeholder),
-    'placeholder preserved in re-mask (not double-masked)');
+  assert(reMasked.includes(fake),
+    'fake preserved in re-mask (not double-masked)');
 
   // Phase 3: unmask should still work
-  const unmasked = s.unmask(placeholder);
+  const unmasked = s.unmask(fake);
   assertEqual(unmasked, 'sk-proj-DB-SECRET-888877776655',
-    'placeholder can still be resolved');
+    'fake can still be resolved');
 }
 
 // 15. Write tool unmask
-console.log('\n📦 Write tool unmask (placeholder → real before file write)');
+console.log('\n📦 Write tool unmask (fake → real before file write)');
 {
   const s = new SecretStore();
-  const placeholder = s.register('sk-proj-WRITE-TEST-REAL-KEY-001122334455');
+  const fake = s.register('sk-proj-WRITE-TEST-REAL-KEY-001122334455');
 
-  // Simulate: model writes placeholder content to file
-  const modelContent = `DATABASE_URL=postgres://user:${placeholder}@localhost/db\nKEY=${placeholder}`;
+  // Simulate: model writes fake content to file
+  const modelContent = `DATABASE_URL=postgres://user:${fake}@localhost/db\nKEY=${fake}`;
   const unmasked = s.unmask(modelContent);
-  assert(!unmasked.includes(placeholder),
-    'placeholder replaced before write');
+  assert(!unmasked.includes(fake),
+    'fake replaced before write');
   assert(unmasked.includes('sk-proj-WRITE-TEST-REAL-KEY-001122334455'),
     'real value restored in write content');
   assertEqual(
@@ -417,33 +417,33 @@ console.log('\n📦 Write tool unmask (placeholder → real before file write)')
 }
 
 // 16. Edit tool unmask
-console.log('\n📦 Edit tool unmask (placeholder → real before file edit)');
+console.log('\n📦 Edit tool unmask (fake → real before file edit)');
 {
   const s = new SecretStore();
-  const placeholder = s.register('sk-proj-EDIT-REAL-KEY-9988776655443322');
+  const fake = s.register('sk-proj-EDIT-REAL-KEY-9988776655443322');
 
-  // Simulate: model edits a file, replacing old value with placeholder
+  // Simulate: model edits a file, replacing old value with fake
   const edits: { oldText: string; newText: string }[] = [
-    { oldText: 'old_key=xxx', newText: `new_key=${placeholder}` }
+    { oldText: 'old_key=xxx', newText: `new_key=${fake}` }
   ];
   for (const edit of edits) {
     edit.newText = s.unmask(edit.newText);
   }
-  assert(!edits[0].newText.includes(placeholder),
-    'placeholder replaced in edit.newText');
+  assert(!edits[0].newText.includes(fake),
+    'fake replaced in edit.newText');
   assert(edits[0].newText.includes('sk-proj-EDIT-REAL-KEY-9988776655443322'),
     'real value restored in edit');
 }
 
-// 17. Write-read round trip (model writes placeholder → reads back → sees placeholder)
-console.log('\n📦 Write → read round-trip (placeholder preserved)');
+// 17. Write-read round trip (model writes fake → reads back → sees fake)
+console.log('\n📦 Write → read round-trip (fake preserved)');
 {
   const s = new SecretStore();
   const real = 'ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdefghij';
-  const placeholder = s.register(real);
+  const fake = s.register(real);
 
   // Phase 1: model writes file (should unmask to real)
-  const writeContent = `GITHUB_TOKEN=${placeholder}`;
+  const writeContent = `GITHUB_TOKEN=${fake}`;
   const diskContent = s.unmask(writeContent);
   assert(diskContent.includes('ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdefghij'),
     'file on disk has real value');
@@ -451,11 +451,11 @@ console.log('\n📦 Write → read round-trip (placeholder preserved)');
   // Phase 2: model reads the file back
   // tool_result calls mask() on the read content
   const readResult = s.mask(diskContent);
-  assert(readResult.includes(placeholder),
-    'model sees placeholder when reading back');
+  assert(readResult.includes(fake),
+    'model sees fake when reading back');
 
-  // Phase 3: model uses the placeholder in bash
-  const bashCommand = `curl -H "Authorization: token ${placeholder}" https://api.github.com/user`;
+  // Phase 3: model uses the fake in bash
+  const bashCommand = `curl -H "Authorization: token ${fake}" https://api.github.com/user`;
   const executedCommand = s.unmask(bashCommand);
   assert(executedCommand.includes('ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdefghij'),
     'bash command gets real value at execution time');
