@@ -1,5 +1,5 @@
 /**
- * Unit tests for pi-secret-mask core logic.
+ * Unit tests for pi-fake-secret core logic.
  *
  * Run: npx tsx test/core.test.ts
  */

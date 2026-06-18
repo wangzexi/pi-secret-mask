@@ -1,7 +1,7 @@
 /**
- * pi-secret-mask
+ * pi-fake-secret
  *
- * Masks real secrets with lookalike placeholders before they reach the LLM,
+ * Fakes real secrets with lookalike placeholders before they reach the LLM,
  * and restores them at execution time.
  *
  * ┌─ user input ──► input hook (real → placeholder) ──► LLM ──► tool_call(bash) hook (placeholder → real) ──► bash
@@ -233,14 +233,14 @@ class SecretStore {
 
   /**
    * Format a single change for notification display.
-   * Mask:   🔒 sk-p…2504 → sk-proj-XyZAbCd...
-   * Unmask: 🔓 sk-proj-XyZAbCd... → sk-p…2504
+   * Fake:    🎭 sk-p…2504 → sk-proj-XyZAbCd...
+   * Restore: 🎭 sk-proj-XyZAbCd... → sk-p…2504
    */
   formatChange(c: {real:string;placeholder:string;type:'mask'|'unmask'}): string {
     if (c.type === 'mask') {
-      return `🔒 ${this.hint(c.real)} → ${c.placeholder}`;
+      return `🎭 造假: ${this.hint(c.real)} → ${c.placeholder}`;
     }
-    return `🔓 ${c.placeholder} → ${this.hint(c.real)}`;
+    return `🎭 还原: ${c.placeholder} → ${this.hint(c.real)}`;
   }
 
   // ---------------------------------------------------------------------------
@@ -522,7 +522,7 @@ export default function (pi: ExtensionAPI): void {
   // /secret-mask command
   // ---------------------------------------------------------------------------
   pi.registerCommand("secret-mask", {
-    description: "Show pi-secret-mask status and mapping table",
+    description: "Show pi-fake-secret status and mapping table",
     getArgumentCompletions: (prefix: string) => {
       const opts = ["list", "status"].filter(c => c.startsWith(prefix));
       return opts.length > 0 ? opts.map(v => ({ value: v, label: v })) : null;
@@ -547,7 +547,7 @@ export default function (pi: ExtensionAPI): void {
       // Default: status
       const stats = store.getStats();
       ctx.ui.notify(
-        `pi-secret-mask\n` +
+        `pi-fake-secret\n` +
         `  Patterns: ${stats.patternCount}\n` +
         `  Active mappings: ${stats.mappingCount}`,
         "info"

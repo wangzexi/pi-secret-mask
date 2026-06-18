@@ -1,7 +1,7 @@
 {
-  "name": "pi-secret-mask",
+  "name": "pi-fake-secret",
   "version": "0.1.0",
-  "description": "Pi 插件：在密钥到达 LLM 之前用形似占位符替换，执行时再恢复为真实值。模型永远看不到真实密钥。",
+  "description": "Pi 插件：给模型造假的密钥，执行时再换成真的。模型永远看不到真实值。",
   "type": "module",
   "main": "index.ts",
   "files": [
@@ -25,7 +25,7 @@
     "masking"
   ],
   "scripts": {
-    "test": "tsx test/core.test.ts"
+    "test": "npx tsx test/core.test.ts"
   },
   "license": "MIT"
 }

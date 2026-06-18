@@ -1,6 +1,6 @@
-# pi-secret-mask 🔐
+# pi-fake-secret 🔐
 
-**Pi 插件：在密钥到达 LLM 之前用形似的占位符替换，执行时再恢复回真实值。**
+**Pi 插件：给模型造假的密钥，执行时再换成真的。模型永远看不到真实值。**
 
 模型（缸中之脑）永远只看到长得和真实密钥一模一样的占位符。扩展维护一张 1:1 映射表，在桥接边界——模型上下文之前、bash 执行之前——进行值的交换。
 
@@ -19,7 +19,7 @@
 
 编程助手可以访问你的整个工作区——`.env`、配置文件、凭据、私钥。当你问 AI 一个问题时，这些密钥可能原样发给模型提供商。
 
-`pi-secret-mask` 在 pi 扩展层拦截：
+`pi-fake-secret` 在 pi 扩展层拦截：
 
 - **密钥到达 LLM 上下文之前** → 替换成形似的占位符
 - **bash 命令执行之前** → 占位符换回真实值
@@ -78,7 +78,7 @@ AKIAAKIAIOSFODNN7EXAMPLE       →  AKIAPdBJNeKqHmZlYkWfS7626713999
 
 ```bash
 # 从本地路径安装
-pi install /path/to/pi-secret-mask
+pi install /path/to/pi-fake-secret
 ```
 
 重启 pi 或运行 `/reload` 激活。
@@ -128,8 +128,8 @@ pi install /path/to/pi-secret-mask
 ## 开发
 
 ```bash
-git clone https://github.com/wangzexi/pi-secret-mask
-cd pi-secret-mask
+git clone https://github.com/wangzexi/pi-fake-secret
+cd pi-fake-secret
 # 编辑 index.ts，然后测试：
 pi -e ./index.ts
 ```
