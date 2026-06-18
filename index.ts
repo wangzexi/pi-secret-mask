@@ -462,31 +462,9 @@ export default function (pi: ExtensionAPI): void {
   });
 
   // ---------------------------------------------------------------------------
-  // user_bash — intercept ! / !! command output before it enters context
-  // ---------------------------------------------------------------------------
-  pi.on("user_bash", async (event, ctx) => {
-    const { createLocalBashOperations } = await import("@earendil-works/pi-coding-agent");
-    const local = createLocalBashOperations();
-
-    return {
-      operations: {
-        exec: async (command: string, cwd: string, options?: Record<string, unknown>) => {
-          const result = await local.exec(command, cwd, options);
-          // Only mask when output goes to LLM context (!, not !!)
-          if (!event.excludeFromContext && result.output) {
-            store.beginTracking();
-            result.output = store.mask(result.output);
-            const changes = store.flushChanges();
-            if (ctx.hasUI && changes.length > 0) {
-              ctx.ui.notify(changes.map(c => store.formatChange(c)).join("\n"), "info");
-            }
-          }
-          return result;
-        },
-      },
-    };
-  });
-
+  // user_bash is intentionally NOT handled — ! / !! output goes to the user's
+  // terminal unchanged so they see real values. When the output enters the LLM
+  // context, the context handler below fakes secrets before the next model call.
   // ---------------------------------------------------------------------------
   // before_provider_request — silent last defense before payload leaves
   // ---------------------------------------------------------------------------

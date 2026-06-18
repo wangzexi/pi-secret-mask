@@ -52,7 +52,6 @@ pi install /path/to/pi-fake-secret
 | `tool_call(write)` | model → 文件 | 假→真 |
 | `tool_call(edit)` | model → 编辑 | 假→真 |
 | `tool_result` | 结果 → model | 真→假 🎭 |
-| `user_bash` | `!` 命令 → model | 真→假 🎭 |
 | `context` | 历史 → model | 真→假（静默） |
 | `before_provider_request` | payload → 模型 | 真→假（静默） |
 
