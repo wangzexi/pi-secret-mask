@@ -1,7 +1,7 @@
 {
   "name": "pi-fake-secret",
   "version": "0.1.0",
-  "description": "Pi 扩展：对模型造假密钥，执行时换真的。",
+  "description": "让模型只能看到 Harness 替换的假密钥",
   "type": "module",
   "main": "index.ts",
   "files": [
