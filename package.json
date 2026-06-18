@@ -1,7 +1,7 @@
 {
   "name": "pi-fake-secret",
   "version": "0.1.0",
-  "description": "让模型只能看到 Harness 替换的假密钥",
+  "description": "Secret NAT——像 NAT 转换网络地址一样，Harness 替模型换密钥。模型只看假的，执行换真的。",
   "type": "module",
   "main": "index.ts",
   "files": [
