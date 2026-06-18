@@ -75,6 +75,9 @@ class SecretStore {
   private placeholderToReal = new Map<string, string>();
   /** active detection patterns */
   private patterns: SecretPattern[] = [];
+  /** accumulated changes since last beginTracking() call */
+  private pendingChanges: Array<{real:string;placeholder:string;type:'mask'|'unmask'}> = [];
+  private tracking = false;
 
   // ---------------------------------------------------------------------------
   // Configuration
@@ -86,6 +89,24 @@ class SecretStore {
 
   getPatterns(): SecretPattern[] {
     return this.patterns;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Change tracking (for notifications)
+  // ---------------------------------------------------------------------------
+
+  /** Start accumulating changes. */
+  beginTracking(): void {
+    this.pendingChanges = [];
+    this.tracking = true;
+  }
+
+  /** Collect and clear accumulated changes. */
+  flushChanges(): Array<{real:string;placeholder:string;type:'mask'|'unmask'}> {
+    this.tracking = false;
+    const c = this.pendingChanges;
+    this.pendingChanges = [];
+    return c;
   }
 
   // ---------------------------------------------------------------------------
@@ -103,6 +124,9 @@ class SecretStore {
     const placeholder = this.generatePlaceholder(real);
     this.realToPlaceholder.set(real, placeholder);
     this.placeholderToReal.set(placeholder, real);
+    if (this.tracking) {
+      this.pendingChanges.push({ real, placeholder, type: 'mask' });
+    }
     return placeholder;
   }
 
@@ -171,7 +195,12 @@ class SecretStore {
     const sorted = [...this.placeholderToReal.entries()]
       .sort((a, b) => b[0].length - a[0].length);
     for (const [placeholder, real] of sorted) {
-      result = result.replaceAll(placeholder, real);
+      if (result.includes(placeholder)) {
+        if (this.tracking) {
+          this.pendingChanges.push({ real, placeholder, type: 'unmask' });
+        }
+        result = result.replaceAll(placeholder, real);
+      }
     }
     return result;
   }
@@ -187,15 +216,31 @@ class SecretStore {
     };
   }
 
+  /** Truncate a secret for display: first 4 + … + last 4 chars. */
+  private hint(real: string): string {
+    return real.length > 8
+      ? real.slice(0, 4) + "…" + real.slice(-4)
+      : real;
+  }
+
   getMappings(): SecretMapping[] {
     return [...this.realToPlaceholder.entries()]
-      .map(([real, placeholder]) => {
-        // Show only a hint of the real value for display
-        const hint = real.length > 8
-          ? real.slice(0, 4) + "…" + real.slice(-4)
-          : "…";
-        return { real: hint, placeholder };
-      });
+      .map(([real, placeholder]) => ({
+        real: this.hint(real),
+        placeholder,
+      }));
+  }
+
+  /**
+   * Format a single change for notification display.
+   * Mask:   🔒 sk-p…2504 → sk-proj-XyZAbCd...
+   * Unmask: 🔓 sk-proj-XyZAbCd... → sk-p…2504
+   */
+  formatChange(c: {real:string;placeholder:string;type:'mask'|'unmask'}): string {
+    if (c.type === 'mask') {
+      return `🔒 ${this.hint(c.real)} → ${c.placeholder}`;
+    }
+    return `🔓 ${c.placeholder} → ${this.hint(c.real)}`;
   }
 
   // ---------------------------------------------------------------------------
@@ -340,59 +385,54 @@ export default function (pi: ExtensionAPI): void {
   pi.on("input", async (event, ctx) => {
     if (!event.text) return { action: "continue" };
 
-    const before = store.getStats().mappingCount;
+    store.beginTracking();
     const masked = store.mask(event.text);
     if (masked === event.text) return { action: "continue" };
 
-    const newCount = store.getStats().mappingCount - before;
-    ctx.ui.notify(`🔒 Masked ${newCount} secret(s) from your input`, "info");
+    const changes = store.flushChanges();
+    if (ctx.hasUI && changes.length > 0) {
+      ctx.ui.notify(changes.map(c => store.formatChange(c)).join("\n"), "info");
+    }
 
     return { action: "transform", text: masked };
   });
 
   // ---------------------------------------------------------------------------
   // tool_call — swap placeholders back to real values before tool executes
-  //
-  // bash   — command strings containing placeholders
-  // write  — file content containing placeholders
-  // edit   — replacement text containing placeholders
-  //
-  // The model only ever sees placeholders. At execution time, the harness
-  // resolves them to real values so that files on disk contain valid
-  // secrets and bash commands authenticate correctly.
   // ---------------------------------------------------------------------------
   pi.on("tool_call", async (event, ctx) => {
     if (store.getStats().mappingCount === 0) return {};
 
     if (isToolCallEventType("bash", event)) {
-      const before = event.input.command;
+      store.beginTracking();
       event.input.command = store.unmask(event.input.command);
-      if (event.input.command !== before && ctx.hasUI) {
-        ctx.ui.notify(`🔓 Unmasked placeholders in bash command`, "info");
+      const changes = store.flushChanges();
+      if (ctx.hasUI && changes.length > 0) {
+        ctx.ui.notify(changes.map(c => store.formatChange(c)).join("\n"), "info");
       }
       return {};
     }
 
     if (isToolCallEventType("write", event)) {
-      const before = event.input.content;
+      store.beginTracking();
       event.input.content = store.unmask(event.input.content);
-      if (event.input.content !== before && ctx.hasUI) {
-        ctx.ui.notify(`🔓 Unmasked placeholders in file write`, "info");
+      const changes = store.flushChanges();
+      if (ctx.hasUI && changes.length > 0) {
+        ctx.ui.notify(changes.map(c => store.formatChange(c)).join("\n"), "info");
       }
       return {};
     }
 
     if (isToolCallEventType("edit", event)) {
-      let changed = false;
+      store.beginTracking();
       if (Array.isArray(event.input.edits)) {
         for (const edit of event.input.edits) {
-          const before = edit.newText;
           edit.newText = store.unmask(edit.newText);
-          if (edit.newText !== before) changed = true;
         }
       }
-      if (changed && ctx.hasUI) {
-        ctx.ui.notify(`🔓 Unmasked placeholders in file edit`, "info");
+      const changes = store.flushChanges();
+      if (ctx.hasUI && changes.length > 0) {
+        ctx.ui.notify(changes.map(c => store.formatChange(c)).join("\n"), "info");
       }
       return {};
     }
@@ -406,15 +446,16 @@ export default function (pi: ExtensionAPI): void {
   pi.on("tool_result", async (event, ctx) => {
     if (!event.content || !Array.isArray(event.content)) return {};
 
-    // Only notify for file reads that might contain secrets
     const isReadResult = event.toolName === "read" || event.toolName === "bash";
 
+    store.beginTracking();
     const newContent = transformTextBlocks(event.content, (text) => store.mask(text));
 
     if (newContent === event.content) return {};
 
-    if (isReadResult && ctx.hasUI) {
-      ctx.ui.notify(`🔒 Masked secrets from ${event.toolName} result`, "info");
+    const changes = store.flushChanges();
+    if (isReadResult && ctx.hasUI && changes.length > 0) {
+      ctx.ui.notify(changes.map(c => store.formatChange(c)).join("\n"), "info");
     }
 
     return { content: newContent };
@@ -433,11 +474,11 @@ export default function (pi: ExtensionAPI): void {
           const result = await local.exec(command, cwd, options);
           // Only mask when output goes to LLM context (!, not !!)
           if (!event.excludeFromContext && result.output) {
-            const before = store.getStats().mappingCount;
+            store.beginTracking();
             result.output = store.mask(result.output);
-            const newCount = store.getStats().mappingCount - before;
-            if (newCount > 0 && ctx.hasUI) {
-              ctx.ui.notify(`🔒 Masked ${newCount} secret(s) from ! command output`, "info");
+            const changes = store.flushChanges();
+            if (ctx.hasUI && changes.length > 0) {
+              ctx.ui.notify(changes.map(c => store.formatChange(c)).join("\n"), "info");
             }
           }
           return result;
@@ -447,24 +488,22 @@ export default function (pi: ExtensionAPI): void {
   });
 
   // ---------------------------------------------------------------------------
-  // before_provider_request — last defense before the payload leaves
+  // before_provider_request — silent last defense before payload leaves
   // ---------------------------------------------------------------------------
   pi.on("before_provider_request", (event, _ctx) => {
     try {
-      // Deep-scan the entire serialized payload for any secrets that
-      // might have bypassed earlier handlers
       const json = JSON.stringify(event.payload);
       const masked = store.mask(json);
-      if (masked === json || masked.length === 0) return;
-      return JSON.parse(masked);
+      if (masked !== json && masked.length > 0) {
+        return JSON.parse(masked);
+      }
     } catch {
-      // If serialization fails, let the original payload through
-      // rather than breaking the provider call
+      // Never break the provider call
     }
   });
 
   // ---------------------------------------------------------------------------
-  // context — full history scan before each LLM call (defense in depth)
+  // context — silent full history scan before each LLM call
   // ---------------------------------------------------------------------------
   pi.on("context", async (event, _ctx) => {
     if (!event.messages || event.messages.length === 0) return;
