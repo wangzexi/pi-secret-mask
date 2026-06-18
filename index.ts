@@ -361,24 +361,38 @@ export default function (pi: ExtensionAPI): void {
   // resolves them to real values so that files on disk contain valid
   // secrets and bash commands authenticate correctly.
   // ---------------------------------------------------------------------------
-  pi.on("tool_call", async (event, _ctx) => {
+  pi.on("tool_call", async (event, ctx) => {
     if (store.getStats().mappingCount === 0) return {};
 
     if (isToolCallEventType("bash", event)) {
+      const before = event.input.command;
       event.input.command = store.unmask(event.input.command);
+      if (event.input.command !== before && ctx.hasUI) {
+        ctx.ui.notify(`🔓 Unmasked placeholders in bash command`, "info");
+      }
       return {};
     }
 
     if (isToolCallEventType("write", event)) {
+      const before = event.input.content;
       event.input.content = store.unmask(event.input.content);
+      if (event.input.content !== before && ctx.hasUI) {
+        ctx.ui.notify(`🔓 Unmasked placeholders in file write`, "info");
+      }
       return {};
     }
 
     if (isToolCallEventType("edit", event)) {
+      let changed = false;
       if (Array.isArray(event.input.edits)) {
         for (const edit of event.input.edits) {
+          const before = edit.newText;
           edit.newText = store.unmask(edit.newText);
+          if (edit.newText !== before) changed = true;
         }
+      }
+      if (changed && ctx.hasUI) {
+        ctx.ui.notify(`🔓 Unmasked placeholders in file edit`, "info");
       }
       return {};
     }
